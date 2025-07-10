@@ -31,13 +31,13 @@ resource "google_container_cluster" "primary" {
 
   networking_mode = "VPC_NATIVE"
 
-  addons_config {
-    network_policy_config {
-      disabled = false
-    }
-  }
+  # addons_config {
+  #   network_policy_config {
+  #     disabled = false
+  #   }
+  # }
 
-  enable_multi_networking = true
+  # enable_multi_networking = true
 
   private_cluster_config {
     enable_private_endpoint = true
@@ -118,6 +118,19 @@ resource "google_compute_instance" "default" {
   metadata = {
     "startup-script" = <<EOF
     #!/bin/bash
+    #install kubeclt
+    curl -LO https://dl.k8s.io/release/v1.33.0/bin/linux/amd64/kubectl
+    sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
+    sudo apt-get install google-cloud-cli-gke-gcloud-auth-plugin
+    #install helm
+    wget https://get.helm.sh/helm-v3.13.3-linux-amd64.tar.gz
+    tar -zxvf helm-v3.13.3-linux-amd64.tar.gz
+    sudo mv linux-amd64/helm /usr/local/bin/helm
+    rm -rf linux-amd64*
+    #install kubens
+    curl -sS https://webi.sh/kubens | sh; \
+    source ~/.config/envman/PATH.env
+    #install tinyproxy
     sudo apt-get update -y
     sudo apt-get install tinyproxy -y
     sudo cp /etc/tinyproxy/tinyproxy.conf /etc/tinyproxy/tinyproxy.conf.bak
@@ -175,14 +188,12 @@ module "cloud-nat" {
 
 }
 
-
-############Output############################################
-output "kubernetes_cluster_host" {
-  value       = google_container_cluster.primary.endpoint
-  description = "GKE Cluster Host"
+resource "kubernetes_namespace" "example" {
+  metadata {
+    name = "my-first-namespace"
+  }
 }
 
-output "kubernetes_cluster_name" {
-  value       = google_container_cluster.primary.name
-  description = "GKE Cluster Name"
+resource "kubernetes_manifest" "configmap" {
+  manifest = yamldecode(file("./manifests/configmap.yaml"))
 }
