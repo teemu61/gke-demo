@@ -1,140 +1,185 @@
-# create VPC
 resource "google_compute_network" "vpc" {
-  name                    = "vpc2"
+  project                 = var.project
+  name                    = "gke-vpc"
   auto_create_subnetworks = false
+  lifecycle { ignore_changes = all }
 }
 
-# Create Subnet
+resource "google_compute_network" "vpc2" {
+  project                 = var.project
+  name                    = "gke-vpc2"
+  auto_create_subnetworks = false
+  lifecycle { ignore_changes = all }
+}
+
 resource "google_compute_subnetwork" "subnet" {
-  name          = "subnet1"
+  project       = var.project
+  name          = "gke-subnet"
+  ip_cidr_range = "10.0.0.0/16"
   region        = var.region
-  network       = google_compute_network.vpc.name
-  ip_cidr_range = "10.0.0.0/24"
+  network       = google_compute_network.vpc.id
+  secondary_ip_range {
+    range_name    = "services-range"
+    ip_cidr_range = "192.168.0.0/24"
+  }
+  secondary_ip_range {
+    range_name    = "pod-ranges"
+    ip_cidr_range = "192.168.1.0/24"
+  }
+  lifecycle { ignore_changes = all }
 }
 
-# Create Service Account
+resource "google_compute_subnetwork" "subnet2" {
+  project       = var.project
+  name          = "gke-subnet2"
+  ip_cidr_range = "10.1.0.0/16"
+  region        = var.region
+  network       = google_compute_network.vpc2.id
+  secondary_ip_range {
+    range_name    = "services-range2"
+    ip_cidr_range = "192.168.2.0/24"
+  }
+  secondary_ip_range {
+    range_name    = "pod-ranges2"
+    ip_cidr_range = "192.168.3.0/24"
+  }
+  lifecycle { ignore_changes = all }
+}
+
 resource "google_service_account" "service-account-for-gke-demo" {
+  project      = var.project
   account_id   = "terraform-demo-aft"
   display_name = "Service Account for GKE nodes"
 }
 
-
-# Create GKE cluster with 2 nodes in our custom VPC/Subnet
 resource "google_container_cluster" "primary" {
-  name                     = "my-gke-cluster"
+  project                  = var.project_id
+  name                     = "test-cluster"
   location                 = var.location
   network                  = google_compute_network.vpc.name
   subnetwork               = google_compute_subnetwork.subnet.name
-  remove_default_node_pool = true ## create the smallest possible default node pool and immediately delete it.
-  # networking_mode          = "VPC_NATIVE" 
-  initial_node_count = 1
+  deletion_protection      = false
+  remove_default_node_pool = true
+  initial_node_count       = 1
+  networking_mode          = "VPC_NATIVE"
+  enable_multi_networking  = true
+  datapath_provider        = "ADVANCED_DATAPATH"
 
-  networking_mode = "VPC_NATIVE"
-
-  addons_config {
-    network_policy_config {
-      disabled = false
-    }
-  }
-
-  enable_multi_networking = true
-
+  # This must NOT overlap with "10.0.0.0/16"
   private_cluster_config {
     enable_private_endpoint = true
     enable_private_nodes    = true
     master_ipv4_cidr_block  = "10.13.0.0/28"
   }
-  ip_allocation_policy {
-    cluster_ipv4_cidr_block  = "10.11.0.0/21"
-    services_ipv4_cidr_block = "10.12.0.0/21"
-  }
+
+  # Enable just-host to access gke cluster
   master_authorized_networks_config {
     cidr_blocks {
-      cidr_block   = "10.0.0.7/32"
+      cidr_block   = "10.0.0.4/32"
       display_name = "net1"
     }
   }
+
+  # Esimerkki linux configuraatiosta
+  # node_config {
+  #   # Kubelet configuration
+  #   kubelet_config {
+  #     cpu_manager_policy = "static"
+  #   }
+
+  #   linux_node_config {
+  #     # Sysctl configuration
+  #     sysctls = {
+  #       "net.core.netdev_max_backlog" = "10000"
+  #     }
+  #     # Linux cgroup mode configuration
+  #     cgroup_mode = "CGROUP_MODE_V2"
+  #     # Linux huge page configuration
+  #     hugepages_config {
+  #       hugepage_size_2m = "1024"
+  #     }
+  #   }
+  # }
 }
 
-# Create managed node pool
 resource "google_container_node_pool" "primary_nodes" {
-  name       = google_container_cluster.primary.name
+  project    = var.project_id
+  name       = "primary-node-pool"
   location   = var.location
   cluster    = google_container_cluster.primary.name
-  node_count = 3
+  node_count = 4
 
+  # Define an additional network to support multi-network Pods
+  network_config {
+    enable_private_nodes = true
+    additional_node_network_configs {
+      network    = google_compute_network.vpc2.name
+      subnetwork = google_compute_subnetwork.subnet2.name
+    }
+    additional_pod_network_configs {
+      subnetwork          = google_compute_subnetwork.subnet2.name
+      secondary_pod_range = "pod-ranges2"
+      max_pods_per_node   = 4
+    }
+  }
   node_config {
     oauth_scopes = [
+      "https://www.googleapis.com/auth/devstorage.read_only",
       "https://www.googleapis.com/auth/logging.write",
       "https://www.googleapis.com/auth/monitoring",
+      "https://www.googleapis.com/auth/compute",
     ]
-
-    labels = {
-      env = "dev"
-    }
-
-    machine_type = "n1-standard-1"
+    labels       = { env = "dev" }
+    machine_type = "e2-small"
     preemptible  = true
-    #service_account = google_service_account.mysa.email
-
-    metadata = {
-      disable-legacy-endpoints = "true"
-    }
+    metadata     = { disable-legacy-endpoints = "true" }
   }
 }
 
-
-
-## Create jump host . We will allow this jump host to access GKE cluster. the ip of this jump host is already authorized to allowin the GKE cluster
-
+# Create jump host . We will allow this jump host to access GKE cluster.
 resource "google_compute_address" "my_internal_ip_addr" {
   project      = var.project
   address_type = "INTERNAL"
   region       = var.region
   subnetwork   = google_compute_subnetwork.subnet.name
-  # subnetwork   = "subnet1"
-  name        = "my-ip"
-  address     = "10.0.0.7"
-  description = "An internal IP address for my jump host"
+  name         = "jump-host-internal-ip"
+  address      = "10.0.0.4"
+  description  = "An internal IP address for my jump host"
 }
 
-resource "google_compute_instance" "default" {
+resource "google_compute_instance" "jump-host-vm" {
   project      = var.project
   zone         = var.zone
   name         = "jump-host"
   machine_type = "e2-medium"
-
   boot_disk {
     initialize_params {
       image = "debian-cloud/debian-11"
     }
   }
   network_interface {
-    network    = "vpc2"
-    subnetwork = "subnet1" # Replace with a reference or self link to your subnet, in quotes
+    network    = google_compute_network.vpc.name
+    subnetwork = google_compute_subnetwork.subnet.id
     network_ip = google_compute_address.my_internal_ip_addr.address
   }
-
   metadata = {
     "startup-script" = <<EOF
     #!/bin/bash
+    #install tinyproxy
     sudo apt-get update -y
     sudo apt-get install tinyproxy -y
     sudo cp /etc/tinyproxy/tinyproxy.conf /etc/tinyproxy/tinyproxy.conf.bak
     sudo sed -i '/Allow 127.0.0.1/a Allow localhost' /etc/tinyproxy/tinyproxy.conf
-    sudo systemctl enable tinyproxy
     sudo systemctl start tinyproxy
-    echo "Tinyproxy installation and configuration complete." >> /var/log/tinyproxy_startup.log
     EOF
   }
 }
 
-## Creare Firewall to access jump hist via iap
+# Creare Firewall to access jump host via iap
 resource "google_compute_firewall" "rules" {
   project = var.project
   name    = "allow-ssh"
-  network = "vpc2" # Replace with a reference or self link to your network, in quotes
-
+  network = google_compute_network.vpc.name
   allow {
     protocol = "tcp"
     ports    = ["22"]
@@ -142,8 +187,32 @@ resource "google_compute_firewall" "rules" {
   source_ranges = ["35.235.240.0/20", "192.168.10.60/32"]
 }
 
-## Create IAP SSH permissions for your test instance
+resource "google_compute_firewall" "rules2" {
+  project = var.project
+  name    = "allow-icmp1"
+  network = google_compute_network.vpc2.name
+  allow {
+    protocol = "tcp"
+    ports    = ["22"]
+  }
+  allow {
+    protocol = "icmp"
+  }
+  source_ranges = ["0.0.0.0/0"]
+}
 
+resource "google_compute_firewall" "rules3" {
+  project = var.project
+  name    = "allow-icmp2"
+  network = google_compute_network.vpc.name
+  allow {
+    protocol = "icmp"
+  }
+  source_ranges = ["0.0.0.0/0"]
+}
+
+
+# Create IAP SSH permissions for your test instance
 resource "google_project_iam_member" "project" {
   project = var.project
   role    = "roles/iap.tunnelResourceAccessor"
@@ -154,17 +223,15 @@ resource "google_project_iam_member" "project" {
   ]
 }
 
-
 # create cloud router for nat gateway
 resource "google_compute_router" "router" {
   project = var.project
   name    = "nat-router"
-  network = "vpc2"
+  network = google_compute_network.vpc.name
   region  = var.region
 }
 
-## Create Nat Gateway with module
-
+# Create Nat Gateway with module
 module "cloud-nat" {
   source     = "terraform-google-modules/cloud-nat/google"
   version    = "~> 1.2"
@@ -172,17 +239,14 @@ module "cloud-nat" {
   region     = var.region
   router     = google_compute_router.router.name
   name       = "nat-config"
-
 }
 
+# resource "kubernetes_namespace" "testing" {
+#   metadata {
+#     name = "testing"
+#   }
+# }
 
-############Output############################################
-output "kubernetes_cluster_host" {
-  value       = google_container_cluster.primary.endpoint
-  description = "GKE Cluster Host"
-}
-
-output "kubernetes_cluster_name" {
-  value       = google_container_cluster.primary.name
-  description = "GKE Cluster Name"
-}
+# resource "kubernetes_manifest" "configmap" {
+#   manifest = yamldecode(file("./manifests/configmap.yaml"))
+# }

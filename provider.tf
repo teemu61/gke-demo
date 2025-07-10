@@ -7,11 +7,20 @@ terraform {
   }
 }
 
+# provider "google" {
+#   region  = var.region
+#   project = var.project
+#   zone    = var.zone
+# }
 
-provider "google" {
+provider "google-beta" {
   region  = var.region
   project = var.project
-  #   credentials = file("tcb-project-371706-b114ce01e529.json")
-  zone = var.zone
-
+  zone    = var.zone
 }
+
+provider "kubernetes" {
+  config_path = "~/.kube/config"
+}
+
+
