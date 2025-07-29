@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: testpod2
+  namespace: kube-system
+  annotations:
+    k8s.v1.cni.cncf.io/networks: default/my-network-attachment, default/my-network-attachment2	
+  labels:
+    app: my-app  
+spec:
+  containers:
+  - name: testpod2
+    command: ["/bin/sh", "-c", "trap : TERM INT; sleep infinity & wait"]
+    image: alpine

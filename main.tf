@@ -253,13 +253,4 @@ module "cloud-nat" {
   router     = google_compute_router.router.name
   name       = "nat-config"
 }
-
-# resource "kubernetes_namespace" "testing" {
-#   metadata {
-#     name = "testing"
-#   }
-# }
-
-# resource "kubernetes_manifest" "configmap" {
-#   manifest = yamldecode(file("./manifests/configmap.yaml"))
-# }
+ 
