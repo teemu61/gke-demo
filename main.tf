@@ -202,12 +202,8 @@ resource "google_compute_firewall" "rules" {
 
 resource "google_compute_firewall" "rules2" {
   project = var.project
-  name    = "allow-icmp1"
+  name    = "allow-icmp2"
   network = google_compute_network.vpc2.name
-  allow {
-    protocol = "tcp"
-    ports    = ["22"]
-  }
   allow {
     protocol = "icmp"
   }
@@ -216,8 +212,8 @@ resource "google_compute_firewall" "rules2" {
 
 resource "google_compute_firewall" "rules3" {
   project = var.project
-  name    = "allow-icmp2"
-  network = google_compute_network.vpc.name
+  name    = "allow-icmp3"
+  network = google_compute_network.vpc3.name
   allow {
     protocol = "icmp"
   }
@@ -253,4 +249,4 @@ module "cloud-nat" {
   router     = google_compute_router.router.name
   name       = "nat-config"
 }
- 
+
