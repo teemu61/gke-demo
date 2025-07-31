@@ -22,14 +22,6 @@ spec:
             "rangeEnd": "192.168.5.200",
             "gateway": "192.168.5.1"
           }
-        },
-        {
-          "name": "mytuning",
-          "type": "tuning",
-          "sysctl": {
-                  "net.core.somaxconn": "500",
-                  "net.ipv4.conf.IFNAME.arp_filter": "1"
-          }
         }
       ]
     }
